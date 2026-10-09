@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>استوديو الكليب الكرتوني</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>استوديو الكليب الكرتوني <small>«<span id="titleView">شفت كلام</span>»</small></h1>
+    <div class="top-actions">
+      <button id="saveProject" class="ghost">حفظ المشروع</button>
+      <label class="ghost btn">فتح مشروع<input id="loadProject" type="file" accept=".json,application/json" hidden /></label>
+      <button id="exportLrc" class="ghost">تصدير LRC</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="col inputs">
+      <div class="card">
+        <h2>١. ملف الأغنية</h2>
+        <input id="audioFile" type="file" accept="audio/*" />
+        <p class="hint" id="audioInfo">لم يُحمَّل ملف صوتي بعد.</p>
+        <div class="row">
+          <button id="analyzeBtn" disabled>حلّل الصوت</button>
+          <label class="inline">حساسية كشف الغناء <input id="vocalThr" type="range" min="0.3" max="0.8" step="0.01" value="0.5" /></label>
+        </div>
+        <div id="analysisInfo" class="stats"></div>
+      </div>
+
+      <div class="card">
+        <h2>٢. الصورة المرجعية للعيون</h2>
+        <input id="imageFile" type="file" accept="image/*" />
+        <p class="hint">اسحب مستطيلًا على الصورة لتحديد منطقة العيون.</p>
+        <div class="crop-wrap">
+          <canvas id="cropCanvas" width="360" height="240"></canvas>
+          <canvas id="eyePreview" width="160" height="120" title="معاينة العيون على الشخصية"></canvas>
+        </div>
+        <label class="inline">محتوى القصّة
+          <select id="eyeMode"><option value="pair">العينان معًا</option><option value="single">عين واحدة (تُعكس)</option></select>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>٣. كلمات الأغنية</h2>
+        <label class="inline">عنوان الأغنية <input id="songTitle" type="text" value="شفت كلام" /></label>
+        <textarea id="lyricsInput" rows="9" placeholder="الصق الكلمات الصحيحة هنا: كل سطر جملة.&#10;يدعم أيضًا ملفات LRC بتوقيتات حقيقية: [00:12.50]نص السطر&#10;أو توقيت لكل كلمة: [00:12.50]&lt;00:12.50&gt;كلمة &lt;00:12.90&gt;كلمة"></textarea>
+        <div class="row">
+          <label class="ghost btn">تحميل ملف كلمات<input id="lyricsFile" type="file" accept=".txt,.lrc,text/plain" hidden /></label>
+          <button id="applyLyrics">اعتماد الكلمات</button>
+          <button id="autoAlign" disabled>محاذاة تلقائية مع الصوت</button>
+        </div>
+        <p class="hint">المحاذاة التلقائية <b>تقدير</b> مبني على مناطق الغناء المكتشفة. ثبّتها بالمزامنة بالنقر أو بالتعديل اليدوي.</p>
+      </div>
+    </section>
+
+    <section class="col stage">
+      <div class="card preview">
+        <div class="canvas-wrap"><canvas id="stage" width="1280" height="720"></canvas><div id="msg" class="msg"></div></div>
+        <div class="transport">
+          <button id="playBtn" disabled>▶ تشغيل</button>
+          <span id="timeView" class="mono">00:00.00 / 00:00.00</span>
+          <span id="shotView" class="pill"></span>
+          <button id="fullBtn" class="ghost">ملء الشاشة</button>
+        </div>
+        <audio id="audio" preload="auto"></audio>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>الخط الزمني</h2>
+          <label class="inline">تكبير <input id="zoom" type="range" min="1" max="40" step="0.5" value="1" /></label>
+        </div>
+        <canvas id="timeline" height="170"></canvas>
+        <p class="legend"><span class="sw wave"></span>الموجة <span class="sw voc"></span>مناطق الغناء <span class="sw beat"></span>الضربات <span class="sw line"></span>الأسطر (اسحب الحواف للتعديل) <span class="sw auto"></span>تقدير غير مؤكد</p>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>الأسطر والمشاهد</h2>
+          <div class="row">
+            <button id="tapLines" disabled title="شغّل واضغط مع بداية كل سطر وارفع إصبعك عند نهايته">⏺ مزامنة الأسطر بالنقر (مسافة)</button>
+            <button id="tapWords" disabled title="لِلسطر المحدد: اضغط مع بداية كل كلمة">⏺ مزامنة كلمات السطر المحدد</button>
+          </div>
+        </div>
+        <div id="tapHelp" class="hint"></div>
+        <div class="table-wrap"><table id="linesTable"><thead><tr><th>#</th><th>السطر</th><th>البداية</th><th>النهاية</th><th>المشهد</th><th>الانتقال</th><th>الحالة</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="card">
+        <h2>التصدير</h2>
+        <div class="row">
+          <label class="inline">من <input id="expFrom" type="number" step="0.1" min="0" value="0" /></label>
+          <label class="inline">إلى <input id="expTo" type="number" step="0.1" min="0" placeholder="النهاية" /></label>
+          <select id="expRes"><option value="1280x720">1280×720</option><option value="1920x1080">1920×1080</option></select>
+          <button id="exportBtn" disabled>تصدير فيديو WebM</button>
+        </div>
+        <p id="exportInfo" class="hint">يُسجَّل الفيديو مع الصوت بالزمن الحقيقي من المتصفح.</p>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="src/ui/app.js"></script>
+</body>
+</html>

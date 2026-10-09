@@ -1,0 +1,12 @@
+{
+  "name": "cartoon-clip-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "استوديو لإنشاء فيديو كليب كرتوني متزامن مع الأغنية وكلماتها العربية",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/unit.test.js",
+    "test:e2e": "node --test tests/e2e.test.js"
+  }
+}

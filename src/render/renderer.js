@@ -3,8 +3,9 @@ import { wordStates } from './text.js';
 import { clamp, lerp, rng, easeInOut, INK } from './util.js';
 import * as A from './scenes/scenes-a.js';
 import * as B from './scenes/scenes-b.js';
+import { room } from './scenes/room.js';
 
-export const SCENES = { ...A, ...B };
+export const SCENES = { ...A, ...B, room };
 export const TRANSITIONS = ['iris', 'wipe', 'zoom', 'ink', 'slide', 'flash'];
 export const TRANSITION_NAMES = { auto: 'تلقائي', iris: 'دائرة (Iris)', wipe: 'مسح متموج', zoom: 'تكبير عبر', ink: 'بقع حبر', slide: 'انزلاق', flash: 'وميض على الضربة', cut: 'قطع مباشر' };
 
@@ -92,7 +93,7 @@ export class Renderer {
     return clamp(i, 0, sh.length - 1);
   }
 
-  context(shot, k, t) {
+  context(shot, k, t, W = BASE_W, H = BASE_H) {
     const a = this.analysis;
     const lines = this.project.lines;
     const line = shot.lineIndex >= 0 ? lines[shot.lineIndex] : null;
@@ -109,8 +110,8 @@ export class Renderer {
     let prevLine = null;
     for (let j = shot.lineIndex - 1; j >= 0; j--) if (lines[j]?.start != null) { prevLine = lines[j].text; break; }
     return {
-      W: BASE_W, H: BASE_H, t, local: t - shot.start, dur: shot.end - shot.start, p: clamp((t - shot.start) / Math.max(0.01, shot.end - shot.start)),
-      line, prevLine, words: wordStates(line, t),
+      W, H, t, local: t - shot.start, dur: shot.end - shot.start, p: clamp((t - shot.start) / Math.max(0.01, shot.end - shot.start)),
+      line, prevLine, words: wordStates(line, t, this.project.textMode || (this.style() === 'room' ? 'sentence' : 'words')), textMode: this.project.textMode || (this.style() === 'room' ? 'sentence' : 'words'),
       lineIn: line ? clamp((t - shot.start) / Math.max(0.2, line.start - shot.start + 0.3)) : 1,
       lineOut: line ? clamp((t - line.end - 0.15) / 0.4) : 0,
       beat, beatT: beat.index >= 0 ? beat.index + beat.phase : t * 2,
@@ -121,20 +122,55 @@ export class Renderer {
     };
   }
 
-  drawShot(ctx, k, t) {
+  // الأبعاد المنطقية للرسم حسب المقاس: عمودي 720×1280 أو أفقي 1280×720
+  dims() { return this.project.aspect === '16:9' ? [1280, 720] : [720, 1280]; }
+  style() { return this.project.style || 'room'; }
+
+  drawShot(ctx, k, t, W = BASE_W, H = BASE_H) {
     const shot = this.shots[k];
     const fn = SCENES[shot.scene] || SCENES.city;
     ctx.save();
-    try { fn(ctx, this.context(shot, k, t)); }
-    catch (e) { console.error('scene error', shot.scene, e); ctx.fillStyle = '#300'; ctx.fillRect(0, 0, BASE_W, BASE_H); }
+    try { fn(ctx, this.context(shot, k, t, W, H)); }
+    catch (e) { console.error('scene error', shot.scene, e); ctx.fillStyle = '#300'; ctx.fillRect(0, 0, W, H); }
     ctx.restore();
   }
 
-  ensureBuf(buf) {
-    if (buf.width !== this.canvas.width || buf.height !== this.canvas.height) { buf.width = this.canvas.width; buf.height = this.canvas.height; }
+  // نمط «الغرفة»: مكان واحد؛ تغيّر السطر يمزج المزاج السابق بالجديد بدل القطع
+  drawRoom(ctx, k, t, W, H) {
+    const shot = this.shots[k];
+    const moodOf = (sh) => (!sh || sh.lineIndex < 0 ? 'neutral' : sh.scene);
+    const c = this.context(shot, k, t, W, H);
+    c.mood = moodOf(shot); c.prevMood = moodOf(this.shots[k - 1]); c.moodF = (t - shot.start) / 0.7;
+    ctx.save();
+    try { SCENES.room(ctx, c); }
+    catch (e) { console.error('scene error room', e); ctx.fillStyle = '#300'; ctx.fillRect(0, 0, W, H); }
+    ctx.restore();
+  }
+
+  ensureBuf(buf, w, h, lw = BASE_W, lh = BASE_H) {
+    if (buf.width !== w || buf.height !== h) { buf.width = w; buf.height = h; }
     const c = buf.getContext('2d');
-    c.setTransform(this.canvas.width / BASE_W, 0, 0, this.canvas.height / BASE_H, 0, 0);
+    c.setTransform(w / lw, 0, 0, h / lh, 0, 0);
     return c;
+  }
+
+  // رسم المشاهد الكرتونية (أفقية الأصل) في سياق بحجم w×h مع الانتقالات
+  renderCartoon(ctx, k, t, w, h) {
+    const shot = this.shots[k], next = this.shots[k + 1];
+    let trans = null;
+    if (next && next.tDur && t > next.start - next.tDur / 2) trans = { from: k, to: k + 1, type: next.transition, p: (t - (next.start - next.tDur / 2)) / next.tDur };
+    else if (shot.tDur && k > 0 && t < shot.start + shot.tDur / 2) trans = { from: k - 1, to: k, type: shot.transition, p: (t - (shot.start - shot.tDur / 2)) / shot.tDur };
+    if (!trans) {
+      ctx.setTransform(w / BASE_W, 0, 0, h / BASE_H, 0, 0);
+      this.drawShot(ctx, k, t);
+    } else {
+      const ca = this.ensureBuf(this.bufA, w, h), cb = this.ensureBuf(this.bufB, w, h);
+      ca.clearRect(0, 0, BASE_W, BASE_H); cb.clearRect(0, 0, BASE_W, BASE_H);
+      this.drawShot(ca, trans.from, t);
+      this.drawShot(cb, trans.to, t);
+      composite(ctx, this.bufA, this.bufB, trans.type, easeInOut(clamp(trans.p)), w, h, trans.to);
+    }
+    return trans;
   }
 
   render(t) {
@@ -144,23 +180,31 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const k = this.shotAt(t);
-    const shot = this.shots[k];
-    const next = this.shots[k + 1];
-    // نافذة الانتقال متمركزة على حدّ اللقطة
     let trans = null;
-    if (next && next.tDur && t > next.start - next.tDur / 2) trans = { from: k, to: k + 1, type: next.transition, p: (t - (next.start - next.tDur / 2)) / next.tDur };
-    else if (shot.tDur && k > 0 && t < shot.start + shot.tDur / 2) trans = { from: k - 1, to: k, type: shot.transition, p: (t - (shot.start - shot.tDur / 2)) / shot.tDur };
-    if (!trans) {
-      ctx.setTransform(W / BASE_W, 0, 0, H / BASE_H, 0, 0);
-      this.drawShot(ctx, k, t);
-    } else {
-      const ca = this.ensureBuf(this.bufA), cb = this.ensureBuf(this.bufB);
-      ca.clearRect(0, 0, BASE_W, BASE_H); cb.clearRect(0, 0, BASE_W, BASE_H);
-      this.drawShot(ca, trans.from, t);
-      this.drawShot(cb, trans.to, t);
-      composite(ctx, this.bufA, this.bufB, trans.type, easeInOut(clamp(trans.p)), W, H, trans.to);
+    if (this.style() === 'room') {
+      const [lw, lh] = this.dims();
+      ctx.setTransform(W / lw, 0, 0, H / lh, 0, 0);
+      this.drawRoom(ctx, k, t, lw, lh);
+      return { shot: k, transition: null };
     }
-    this.post(t, W, H);
+    if (W >= H) {
+      trans = this.renderCartoon(ctx, k, t, W, H);
+      this.post(t, W, H);
+    } else {
+      // المشاهد الكرتونية الأفقية داخل إطار عمودي: خلفية مكبّرة ضبابية + المشهد بعرض الشاشة
+      if (!this.bufF) this.bufF = document.createElement('canvas');
+      const fh = Math.round((W * 9) / 16);
+      const fc = this.ensureBuf(this.bufF, W, fh, W, fh);
+      fc.clearRect(0, 0, W, fh);
+      trans = this.renderCartoon(fc, k, t, W, fh);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const cw = (H * 16) / 9;
+      ctx.filter = 'blur(18px) brightness(0.55)';
+      ctx.drawImage(this.bufF, (W - cw) / 2, 0, cw, H);
+      ctx.filter = 'none';
+      ctx.drawImage(this.bufF, 0, (H - fh) / 2);
+      this.post(t, W, H);
+    }
     return { shot: k, transition: trans };
   }
 

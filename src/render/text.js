@@ -6,11 +6,14 @@ export const LYRIC_FONT = 'Lalezar';
 
 const layoutCache = new Map();
 
-export function layoutWords(ctx, words, size, maxWidth, font = LYRIC_FONT) {
-  const key = words.map((w) => w.text).join(' ') + '|' + size + '|' + Math.round(maxWidth) + font;
+export const fontSpec = (size, font = LYRIC_FONT, weight = '') => `${weight ? weight + ' ' : ''}${size}px "${font}", "Cairo", sans-serif`;
+
+// align: 'center' أو 'right' (محاذاة الأسطر إلى اليمين كما في النصوص العربية)
+export function layoutWords(ctx, words, size, maxWidth, font = LYRIC_FONT, weight = '', align = 'center') {
+  const key = words.map((w) => w.text).join(' ') + '|' + size + '|' + Math.round(maxWidth) + font + weight + align;
   if (layoutCache.has(key)) return layoutCache.get(key);
   ctx.save();
-  ctx.font = `${size}px "${font}", "Cairo", sans-serif`;
+  ctx.font = fontSpec(size, font, weight);
   ctx.direction = 'rtl';
   const space = ctx.measureText(' ').width * 1.4;
   const widths = words.map((w) => ctx.measureText(w.text).width);
@@ -30,7 +33,7 @@ export function layoutWords(ctx, words, size, maxWidth, font = LYRIC_FONT) {
     const y = (ri - (rows.length - 1) / 2) * lh;
     for (const it of r.items) {
       // من اليمين: الحافة اليمنى للسطر = +width/2
-      const right = r.width / 2 - it.off;
+      const right = (align === 'right' ? maxWidth / 2 : r.width / 2) - it.off;
       slots[it.i] = { x: right - it.w / 2, y, w: it.w };
     }
   });
@@ -41,19 +44,26 @@ export function layoutWords(ctx, words, size, maxWidth, font = LYRIC_FONT) {
 }
 
 // يختار حجمًا يلائم الصندوق (حد أقصى صفّين قدر الإمكان)
-export function fitLayout(ctx, words, box, font) {
+export function fitLayout(ctx, words, box, font, weight) {
   let size = box.size || 72;
   for (let k = 0; k < 14; k++) {
-    const L = layoutWords(ctx, words, size, box.w, font);
-    if ((L.rows <= (box.maxRows || 2) && L.height <= (box.h || 1e9)) || size < 26) return L;
+    const L = layoutWords(ctx, words, size, box.w, font, weight, box.align);
+    if ((L.rows <= (box.maxRows || 2) && L.height <= (box.h || 1e9)) || size < 22) return L;
     size = Math.round(size * 0.9);
   }
-  return layoutWords(ctx, words, size, box.w, font);
+  return layoutWords(ctx, words, size, box.w, font, weight, box.align);
 }
 
 // حالة كل كلمة في الزمن t
-export function wordStates(line, t) {
+// mode: 'words' = كل كلمة تظهر وتُضاء مع نطقها، 'sentence' = الجملة كاملة تظهر مع بداية السطر
+export function wordStates(line, t, mode = 'words') {
   if (!line) return [];
+  if (mode === 'sentence') {
+    return line.words.map((w, i) => {
+      const st = line.start + i * 0.035;
+      return { text: w.text, start: st, end: line.end, since: t - st, k: clamp((t - st) / Math.max(0.05, line.end - st)), state: t < st ? 'future' : 'past' };
+    });
+  }
   return line.words.map((w) => {
     const st = w.start ?? line.start, en = w.end ?? line.end;
     return { text: w.text, start: st, end: en, since: t - st, k: clamp((t - st) / Math.max(0.05, en - st)), state: t < st ? 'future' : t < en ? 'active' : 'past' };
@@ -69,10 +79,10 @@ export function wordStates(line, t) {
 export function drawLyricWords(ctx, s, box, style = {}) {
   const ws = s.words;
   if (!ws || !ws.length) return null;
-  const L = fitLayout(ctx, ws, box, style.font);
+  const L = fitLayout(ctx, ws, box, style.font, style.weight);
   const out = s.lineOut || 0;
   ctx.save();
-  ctx.font = `${L.size}px "${style.font || LYRIC_FONT}", "Cairo", sans-serif`;
+  ctx.font = fontSpec(L.size, style.font || LYRIC_FONT, style.weight);
   ctx.direction = 'rtl';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

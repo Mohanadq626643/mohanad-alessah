@@ -67,6 +67,10 @@ test('اعتماد الكلمات ومحاذاتها مع مناطق الغنا�
 });
 
 test('تزامن العرض: السطر والكلمة النشطة في المشهد يطابقان الزمن', async () => {
+  // نمط المشاهد الكرتونية الأفقية مع إضاءة كلمة بكلمة
+  await page.selectOption('#styleSel', 'cartoon');
+  await page.selectOption('#aspectSel', '16:9');
+  await page.selectOption('#textModeSel', 'words');
   const res = await page.evaluate(() => {
     const app = window.__app, r = app.renderer, out = [];
     app.state.project.lines.forEach((l, i) => {
@@ -143,6 +147,46 @@ test('كل المشاهد تُرسم بلا أخطاء ومختلفة بصريً
   assert.deepEqual(errors, []);
 });
 
+test('نمط الغرفة الواحدة (9:16): كل معنى يحوّل الغرفة، والجملة تظهر كاملة مع بداية السطر', async () => {
+  await page.selectOption('#styleSel', 'room');
+  await page.selectOption('#aspectSel', '9:16');
+  await page.selectOption('#textModeSel', 'sentence');
+  const size = await page.evaluate(() => [document.getElementById('stage').width, document.getElementById('stage').height]);
+  assert.deepEqual(size, [720, 1280]);
+  // الجملة كاملة: بعد بداية السطر بقليل كل الكلمات ظاهرة
+  const vis = await page.evaluate(() => {
+    const { renderer: r, state } = window.__app, l = state.project.lines[1], t = l.start + 0.3;
+    const k = r.shotAt(t); return r.context(r.shots[k], k, t, 720, 1280).words.map((w) => w.state);
+  });
+  assert.ok(vis.every((x) => x !== 'future'), JSON.stringify(vis));
+  const moods = ['eyes', 'talk', 'phone', 'night', 'sea', 'rain', 'road', 'heart', 'city', 'stage', 'clock', 'desert', 'fire', 'sunrise'];
+  const sigs = {};
+  for (const m of moods) {
+    const r = await page.evaluate((m) => {
+      const { state, renderer } = window.__app, l = state.project.lines[1];
+      l.scene = m; renderer.rebuild();
+      renderer.render(l.start + 1.2);
+      const c = renderer.canvas, x = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, sig = [];
+      for (let gy = 0; gy < 16; gy++) for (let gx = 0; gx < 9; gx++) { const i = (Math.floor((gy + 0.5) * c.height / 16) * c.width + Math.floor((gx + 0.5) * c.width / 9)) * 4; sig.push(x[i], x[i + 1], x[i + 2]); }
+      return { sig, url: c.toDataURL('image/jpeg', 0.85) };
+    }, m);
+    fs.writeFileSync(path.join(out, `room-${m}.jpg`), Buffer.from(r.url.split(',')[1], 'base64'));
+    sigs[m] = r.sig;
+  }
+  // المكان ثابت لكن كل معنى يغيّر الغرفة بشكل ملحوظ
+  for (let i = 0; i < moods.length; i++) for (let j = i + 1; j < moods.length; j++) {
+    const a = sigs[moods[i]], b = sigs[moods[j]]; let d = 0; for (let q = 0; q < a.length; q++) d += Math.abs(a[q] - b[q]);
+    assert.ok(d / a.length > 1.5, `${moods[i]} ≈ ${moods[j]} (${(d / a.length).toFixed(2)})`);
+  }
+  // لقطات أثناء المزج بين مزاجين (تحوّل لا قطع)
+  await page.evaluate(() => { const { state, renderer } = window.__app; state.project.lines[0].scene = 'eyes'; state.project.lines[1].scene = 'talk'; state.project.lines[2].scene = 'heart'; state.project.lines[3].scene = 'sea'; renderer.rebuild(); });
+  for (const [name, dt] of [['blend-a', 0.1], ['blend-b', 0.35], ['blend-c', 0.8]]) {
+    const url = await page.evaluate((dt) => { const { renderer: r } = window.__app; const sh = r.shots.find((x) => x.lineIndex === 2); r.render(sh.start + dt); return r.canvas.toDataURL('image/jpeg', 0.8); }, dt);
+    fs.writeFileSync(path.join(out, `room-${name}.jpg`), Buffer.from(url.split(',')[1], 'base64'));
+  }
+  assert.deepEqual(errors, []);
+});
+
 test('المزامنة بالنقر تسجّل التوقيت الفعلي وتؤكد السطر', async () => {
   await page.evaluate(() => { window.__app.state.selected = 0; window.__app.startTap('lines'); });
   await page.waitForTimeout(400);
@@ -161,7 +205,7 @@ test('تصدير فيديو WebM حقيقي بالصوت والصورة', async 
   const b64 = await page.evaluate(async () => {
     // إعادة التوقيت الآلي للسطر الأول بعد اختبار النقر، ثم تصدير مقطع يشمل سطرين وانتقالًا
     const app = window.__app; app.state.project.lines[0].status = 'auto'; app.autoAlign(true);
-    const blob = await app.exportVideo({ from: 1.5, to: 6.5, noDownload: true, res: '1280x720' });
+    const blob = await app.exportVideo({ from: 1.5, to: 6.5, noDownload: true, res: 1 });
     const buf = new Uint8Array(await blob.arrayBuffer());
     let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
     return btoa(s);
@@ -173,8 +217,8 @@ test('تصدير فيديو WebM حقيقي بالصوت والصورة', async 
   const kinds = probe.streams.map((s) => s.codec_type).sort();
   assert.deepEqual(kinds, ['audio', 'video']);
   const v = probe.streams.find((s) => s.codec_type === 'video');
-  assert.equal(v.width, 1280); assert.equal(v.height, 720);
+  assert.equal(v.width, 720); assert.equal(v.height, 1280);
   // استخراج إطارات للمراجعة البصرية
-  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', file, '-vf', 'fps=2,scale=640:-1,tile=4x2', '-frames:v', '1', path.join(out, 'export-frames.jpg')]);
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', file, '-vf', 'fps=2,scale=270:-1,tile=5x2', '-frames:v', '1', path.join(out, 'export-frames.jpg')]);
   assert.deepEqual(errors, []);
 });

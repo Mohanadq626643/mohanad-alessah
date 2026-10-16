@@ -7,7 +7,7 @@ import { CropEditor } from './crop.js';
 
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
-const state = { project: { title: 'شفت كلام', lines: [] }, analysis: null, buffer: null, selected: -1, audioName: null, imageData: null, tap: null };
+const state = { project: { title: 'شفت كلام', lines: [], aspect: '9:16', style: 'room', textMode: 'sentence' }, analysis: null, buffer: null, selected: -1, audioName: null, imageData: null, tap: null };
 const renderer = new Renderer($('stage'));
 const crop = new CropEditor($('cropCanvas'), $('eyePreview'), () => { renderer.setData({ eyes: crop.source() }); redraw(); autosave(); });
 const timeline = new Timeline($('timeline'), {
@@ -312,6 +312,20 @@ window.addEventListener('keyup', (e) => { if (e.code === 'Space' && state.tap) {
 $('stage').addEventListener('pointerdown', () => state.tap && tapDown());
 $('stage').addEventListener('pointerup', () => state.tap && tapUp());
 
+// ———————————————— الإخراج: النمط والمقاس وطريقة عرض الكلمات ————————————————
+function applyOutput() {
+  const p = state.project, c = $('stage');
+  const [w, h] = p.aspect === '16:9' ? [1280, 720] : [720, 1280];
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  c.style.setProperty('--ar', p.aspect === '16:9' ? '16 / 9' : '9 / 16');
+  c.classList.toggle('landscape', p.aspect === '16:9');
+  $('styleSel').value = p.style; $('aspectSel').value = p.aspect; $('textModeSel').value = p.textMode;
+  renderer.rebuild(); redraw();
+}
+$('styleSel').addEventListener('change', (e) => { state.project.style = e.target.value; applyOutput(); autosave(); });
+$('aspectSel').addEventListener('change', (e) => { state.project.aspect = e.target.value; applyOutput(); autosave(); });
+$('textModeSel').addEventListener('change', (e) => { state.project.textMode = e.target.value; applyOutput(); autosave(); });
+
 // ———————————————— الصورة ————————————————
 function loadImageURL(url, cropRect) {
   return new Promise((res, rej) => {
@@ -338,7 +352,7 @@ $('songTitle').addEventListener('input', (e) => { state.project.title = e.target
 
 // ———————————————— الحفظ ————————————————
 function projectJSON() {
-  return { app: 'cartoon-clip-studio', version: 1, title: state.project.title, audioName: state.audioName, lines: state.project.lines, eyes: { image: state.imageData, crop: crop.crop, mode: crop.mode }, lyricsText: $('lyricsInput').value, vocalThreshold: Number($('vocalThr').value) };
+  return { app: 'cartoon-clip-studio', version: 1, title: state.project.title, audioName: state.audioName, lines: state.project.lines, eyes: { image: state.imageData, crop: crop.crop, mode: crop.mode }, aspect: state.project.aspect, style: state.project.style, textMode: state.project.textMode, lyricsText: $('lyricsInput').value, vocalThreshold: Number($('vocalThr').value) };
 }
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
 $('saveProject').addEventListener('click', () => download('shift-kalam-project.json', new Blob([JSON.stringify(projectJSON(), null, 1)], { type: 'application/json' })));
@@ -349,6 +363,10 @@ async function restore(p) {
   if (!p || !Array.isArray(p.lines)) return;
   state.project.title = p.title || 'شفت كلام'; $('songTitle').value = state.project.title; $('titleView').textContent = state.project.title;
   state.project.lines = p.lines;
+  if (p.aspect) state.project.aspect = p.aspect;
+  if (p.style) state.project.style = p.style;
+  if (p.textMode) state.project.textMode = p.textMode;
+  applyOutput();
   $('lyricsInput').value = p.lyricsText || p.lines.map((l) => l.text).join('\n');
   if (p.vocalThreshold) $('vocalThr').value = p.vocalThreshold;
   if (p.eyes?.mode) { crop.mode = p.eyes.mode; $('eyeMode').value = p.eyes.mode; }
@@ -368,13 +386,14 @@ async function exportVideo(opts = {}) {
   const unconfirmed = state.project.lines.filter((l) => l.status !== 'confirmed').length;
   const from = opts.from ?? (parseFloat($('expFrom').value) || 0);
   const to = opts.to ?? (parseFloat($('expTo').value) || state.buffer.duration);
-  const [w, h] = (opts.res || $('expRes').value).split('x').map(Number);
+  const sc = Number(opts.res || $('expRes').value) || 1;
+  const [w, h] = (state.project.aspect === '16:9' ? [1280, 720] : [720, 1280]).map((v) => Math.round(v * sc));
   const canvas = $('stage'), ow = canvas.width, oh = canvas.height;
   canvas.width = w; canvas.height = h;
   audioGraph(); await actx.resume();
   const stream = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...streamDest.stream.getAudioTracks()]);
   const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: w > 1280 ? 12e6 : 6e6 });
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: sc > 1 ? 12e6 : 6e6 });
   const chunks = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   const done = new Promise((r) => (rec.onstop = r));
@@ -402,6 +421,7 @@ async function exportVideo(opts = {}) {
   try { await Promise.all([document.fonts.load('80px "Lalezar"'), document.fonts.load('20px "Cairo"')]); } catch { /* يُستخدم خط بديل */ }
   try { const saved = JSON.parse(localStorage.getItem('clipStudio.project') || 'null'); if (saved) await restore(saved); } catch { /* تجاهل */ }
   renderer.setData({ project: state.project, eyes: crop.source(), duration: 10 });
+  applyOutput();
   renderTable(); redraw();
   setInterval(() => crop.draw(), 120);
 })();

@@ -56,6 +56,21 @@
     </section>
 
     <section class="col stage">
+      <div class="card">
+        <h2>الإخراج</h2>
+        <div class="row">
+          <label class="inline">النمط
+            <select id="styleSel"><option value="room">مكان واحد يتحوّل مع المعنى</option><option value="cartoon">مشاهد كرتونية متعددة</option></select>
+          </label>
+          <label class="inline">المقاس
+            <select id="aspectSel"><option value="9:16">عمودي 9:16</option><option value="16:9">أفقي 16:9</option></select>
+          </label>
+          <label class="inline">عرض الكلمات
+            <select id="textModeSel"><option value="sentence">الجملة كاملة</option><option value="words">كلمة بكلمة</option></select>
+          </label>
+        </div>
+      </div>
+
       <div class="card preview">
         <div class="canvas-wrap"><canvas id="stage" width="1280" height="720"></canvas><div id="msg" class="msg"></div></div>
         <div class="transport">
@@ -93,7 +108,7 @@
         <div class="row">
           <label class="inline">من <input id="expFrom" type="number" step="0.1" min="0" value="0" /></label>
           <label class="inline">إلى <input id="expTo" type="number" step="0.1" min="0" placeholder="النهاية" /></label>
-          <select id="expRes"><option value="1280x720">1280×720</option><option value="1920x1080">1920×1080</option></select>
+          <select id="expRes"><option value="1">720p</option><option value="1.5">1080p</option></select>
           <button id="exportBtn" disabled>تصدير فيديو WebM</button>
         </div>
         <p id="exportInfo" class="hint">يُسجَّل الفيديو مع الصوت بالزمن الحقيقي من المتصفح.</p>
